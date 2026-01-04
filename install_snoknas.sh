@@ -1,178 +1,117 @@
 #!/bin/bash
 
-# SnokNAS Installer Script
-# Version 1.0.0
-# "SnokNAS - Enterprise Grade NAS System"
+# SnokNAS Installation Script
+# Automated installer for SnokNAS (Customized CasaOS)
+
+set -e
 
 # Colors
-RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+RED='\033[0;31m'
+NC='\033[0m'
 
-LOG_FILE="snoknas_install.log"
-exec > >(tee -a "${LOG_FILE}") 2>&1
+echo -e "${GREEN}Starting SnokNAS Installation...${NC}"
 
-echo -e "${CYAN}"
-echo "================================================="
-echo "   _____             _   _       _            "
-echo "  / ____|           | | | |     | |           "
-echo " | (___  _ __   ___ | |_| | ___ | |     _     "
-echo "  \___ \| '_ \ / _ \| __| |/ _ \| |   _| |_   "
-echo "  ____) | | | | (_) | |_| | (_) | |__|_   _|  "
-echo " |_____/|_| |_|\___/ \__|_|\___/|____| |_|    "
-echo "                                                "
-echo "        SnokNAS Installer - Enterprise Edition  "
-echo "================================================="
-echo -e "${NC}"
-
-# -----------------------------------------------------------------------------
-# Helper Functions
-# -----------------------------------------------------------------------------
-
-function log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-function log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-function log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-function check_error() {
-    if [ $? -ne 0 ]; then
-        log_error "Previous command failed."
-        auto_repair
-    fi
-}
-
-function auto_repair() {
-    log_warn "Attempting auto-repair..."
-    
-    # Try basic apt fix
-    sudo apt-get update --fix-missing
-    sudo dpkg --configure -a
-    sudo apt-get install -f -y
-    
-    if [ $? -eq 0 ]; then
-        log_info "Auto-repair successful. Retrying..."
-    else
-        log_error "Auto-repair failed. Please check logs manually."
-        exit 1
-    fi
-}
-
-function spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
-}
-
-# -----------------------------------------------------------------------------
-# Main Installation Stages
-# -----------------------------------------------------------------------------
-
-log_info "Starting SnokNAS installation..."
-
-# 1. System Update
-echo -e "${BLUE}>>> Updating System Repositories...${NC}"
-sudo apt-get update && sudo apt-get upgrade -y
-check_error
-
-# 2. Dependencies
-DEPENDENCIES=(
-    "curl" "wget" "git" "build-essential" "software-properties-common"
-    "zfsutils-linux" "samba" "smbclient" "nfs-kernel-server"
-    "python3" "python3-pip" "python3-venv"
-    "smartmontools" "lm-sensors" "hddtemp" "hdparm"
-    "qemu-kvm" "libvirt-daemon-system" "libvirt-clients" "bridge-utils"
-    "nginx"
-)
-
-echo -e "${BLUE}>>> Installing Core Dependencies...${NC}"
-sudo apt-get install -y "${DEPENDENCIES[@]}" &
-spinner $!
-check_error
-
-# 3. Docker Installation (if not present)
-if ! command -v docker &> /dev/null; then
-    echo -e "${BLUE}>>> Installing Docker Engine...${NC}"
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    sudo usermod -aG docker "$USER"
-    check_error
-else
-    log_info "Docker is already installed."
+# 1. Check Root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run as root.${NC}" 
+   exit 1
 fi
 
-# 4. Node.js Installation
-if ! command -v node &> /dev/null; then
-    echo -e "${BLUE}>>> Installing Node.js LTS...${NC}"
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-    check_error
+# 2. OS Detection
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$NAME
+    VER=$VERSION_ID
+    echo -e "${GREEN}Detected OS: $OS $VER${NC}"
 else
-    log_info "Node.js is already installed."
+    echo -e "${RED}Unsupported OS.${NC}"
+    exit 1
 fi
 
-# 5. Configuring ZFS
-echo -e "${BLUE}>>> Verifying ZFS Module...${NC}"
-sudo modprobe zfs
-if [ $? -eq 0 ]; then
-    log_info "ZFS module loaded successfully."
+# 3. Install Dependencies
+echo -e "${GREEN}Installing dependencies...${NC}"
+apt-get update
+apt-get install -y smartmontools python3 python3-pip python3-venv curl wget git fonts-roboto
+
+# 4. Install Python Dependencies for Microservices
+echo -e "${GREEN}Setting up Microservices Environment...${NC}"
+mkdir -p /opt/snoknas/services
+python3 -m venv /opt/snoknas/venv
+source /opt/snoknas/venv/bin/activate
+pip install flask psutil
+
+# 5. Build/Install SnokNAS Backend (Simulated Build)
+# In a real scenario, we would pull a binary or build from source.
+# Assuming we are running this from the repo root or have access to source.
+echo -e "${GREEN}Building SnokNAS Backend...${NC}"
+if [ -d "cmd/casaos" ]; then
+    # We are in source
+    go build -o /usr/local/bin/snoknas cmd/casaos/main.go
 else
-    log_warn "Could not load ZFS module. Ensure kernel headers are installed."
-    auto_repair
+    echo "Source not found, skipping build (Manual install required for binary)"
 fi
 
-# 6. Service Configuration (Basic)
-echo -e "${BLUE}>>> Enabling Services...${NC}"
-sudo systemctl enable smbd nmbd nfs-kernel-server docker libvirtd
-check_error
+# 6. Copy Microservices
+echo -e "${GREEN}Deploying Microservices...${NC}"
+cp snoknas-services/monitor.py /opt/snoknas/services/
+cp snoknas-services/updater.py /opt/snoknas/services/
 
-# 7. Setup Directory Structure
-echo -e "${BLUE}>>> Setting up SnokNAS Directory Structure...${NC}"
-INSTALL_DIR="/opt/snoknas"
-DATA_DIR="/mnt/snoknas_data"
+# 7. Create Systemd Services
 
-sudo mkdir -p "$INSTALL_DIR"
-sudo mkdir -p "$DATA_DIR"
-sudo chown -R "$USER":"$USER" "$INSTALL_DIR"
+# Service: snoknas (Main Backend)
+cat <<EOF > /etc/systemd/system/snoknas.service
+[Unit]
+Description=SnokNAS Backend Service
+After=network.target
 
-log_info "Installation directory: $INSTALL_DIR"
+[Service]
+ExecStart=/usr/local/bin/snoknas
+Restart=always
+User=root
+Environment=GOMAXPROCS=4
 
-# 8. Web UI Setup (Build Placeholder)
-# This part assumes we will deploy the built files here later.
-echo -e "${BLUE}>>> Preparing Web UI Environment...${NC}"
-# In a real scenario, we would clone the repo here.
-# git clone https://github.com/snokos/snoknas-ui.git "$INSTALL_DIR/ui" || log_warn "Repo placeholder"
+[Install]
+WantedBy=multi-user.target
+EOF
 
-# 9. Backend Setup (Environment)
-echo -e "${BLUE}>>> Preparing Backend Environment...${NC}"
-python3 -m venv "$INSTALL_DIR/venv"
-source "$INSTALL_DIR/venv/bin/activate"
-pip install fastapi uvicorn psutil smart-open zfs-api docker
-deactivate
+# Service: snoknas-monitor (Port 5000)
+cat <<EOF > /etc/systemd/system/snoknas-monitor.service
+[Unit]
+Description=SnokNAS Disk Monitor
+After=network.target
 
-echo -e "${GREEN}"
-echo "================================================="
-echo "   SnokNAS Installation Complete!                "
-echo "================================================="
-echo " 1. Web UI will be available at http://$(hostname -I | awk '{print $1}'):80"
-echo " 2. Ensure drives are connected for ZFS setup."
-echo " 3. Default user: admin / admin"
-echo "================================================="
-echo -e "${NC}"
+[Service]
+ExecStart=/opt/snoknas/venv/bin/python3 /opt/snoknas/services/monitor.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Service: snoknas-updater (Port 5001)
+cat <<EOF > /etc/systemd/system/snoknas-updater.service
+[Unit]
+Description=SnokNAS Auto Updater
+After=network.target
+
+[Service]
+ExecStart=/opt/snoknas/venv/bin/python3 /opt/snoknas/services/updater.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 8. Reload and Enable
+echo -e "${GREEN}Enabling Services...${NC}"
+systemctl daemon-reload
+systemctl enable snoknas snoknas-monitor snoknas-updater
+# systemctl start snoknas snoknas-monitor snoknas-updater
+
+echo -e "${GREEN}Installation Complete!${NC}"
+echo -e "Web UI: http://<IP>:80 (Default CasaOS/SnokNAS port)"
+echo -e "Disk Monitor API: http://localhost:5000/api/disks"
+echo -e "Updater API: http://localhost:5001/api/check-update"
