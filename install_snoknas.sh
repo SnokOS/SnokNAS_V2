@@ -31,8 +31,30 @@ fi
 
 # 3. Install Dependencies
 echo -e "${GREEN}Installing dependencies...${NC}"
+apt-get update || true
+
+# Clean up broken Docker repos if they exist
+rm -f /etc/apt/sources.list.d/docker.list
+rm -f /etc/apt/keyrings/docker.gpg
+sed -i '/download.docker.com/d' /etc/apt/sources.list
+
+# Install prerequisites
+apt-get install -y ca-certificates curl gnupg smartmontools python3 python3-pip python3-venv wget git fonts-roboto
+
+# Add Docker's official GPG key:
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add the Docker repository to Apt sources:
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+  bookworm stable" | \
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Fix apt update and install Docker
 apt-get update
-apt-get install -y smartmontools python3 python3-pip python3-venv curl wget git fonts-roboto
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # 4. Install Python Dependencies for Microservices
 echo -e "${GREEN}Setting up Microservices Environment...${NC}"
